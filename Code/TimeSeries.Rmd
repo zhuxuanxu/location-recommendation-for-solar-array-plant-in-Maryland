@@ -1,0 +1,373 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+***
+Load all the required libraries
+```{r}
+library("tidyverse")
+library("tidymodels")
+library("timetk")
+library("modeltime")
+```
+
+
+***
+### Load dataset, change datatype
+
+```{r}
+
+df_pv <- read_csv('df_pv_cleaned.csv') %>% 
+  mutate(Month_Year = lubridate::my(Month_Year))
+
+```
+
+```{r}
+# remove rows that Netgen is '.'
+df_pv <-  df_pv[df_pv$Netgen != '.', ]
+# remove rows that Netgen is '0'
+df_pv <-  df_pv[df_pv$Netgen != '0', ]
+# remove rows that Netgen is NA
+df_pv <-  df_pv[-(3365:3375), ]
+# remove rows that Region is '#N/A'
+df_pv <-  df_pv[df_pv$Region != '#N/A', ]
+
+```
+
+
+```{r}
+# change data type of Mmbtu and Netgen to numeric
+df_pv <- df_pv %>% 
+  mutate(Mmbtu = as.numeric(Mmbtu)) %>% 
+  mutate(Netgen = as.numeric(Netgen))
+
+# remove columns which are not useful
+df_pv <- df_pv %>% 
+  select(-c(X1, Combined_Heat_And_Power_Plant, Plant_State, Reported_Prime_Mover))
+
+
+str(df_pv)
+```
+
+***
+### Build ARIMA model for Mount Saint Mary's
+```{r}
+df_msm <- df_pv[df_pv$Plant_Name == "Mount Saint Mary's",]
+df_msm <- df_msm %>% 
+  arrange(Month_Year)
+
+# add trend and month column (for regression)
+df_msm <- df_msm %>% 
+  mutate(trend = row_number()) %>% 
+  mutate(month = as.factor(lubridate::month(Month_Year)))
+
+```
+
+```{r}
+# plot Netgen over time
+df_msm %>%
+  plot_time_series(Month_Year, Netgen, .smooth=FALSE)
+```
+
+```{r}
+df_ms <- df_pv[df_pv$Plant_Name == "Maryland Solar",]
+df_ms <- df_ms %>% 
+   arrange(Month_Year)
+
+# plot Netgen over time
+df_ms %>%
+plot_time_series(Month_Year, Netgen, .smooth=FALSE)
+```
+
+
+
+
+```{r}
+# STL decomposition plot
+df_msm %>%
+  plot_stl_diagnostics(
+          Month_Year, Netgen,
+          # Set features to return, desired frequency and trend
+          .feature_set = c("observed", "season", "trend", "remainder"), 
+          .interactive = FALSE)
+```
+
+```{r}
+# split into train and test set.
+df_msm_train <- df_msm %>%
+  filter(Month_Year<"2020-01-01")
+
+df_msm_test <- df_msm %>%
+  filter(Month_Year>="2020-01-01")
+```
+
+```{r}
+# regression model
+model_re <-
+  linear_reg() %>%
+  set_engine("lm") %>%
+  fit(Netgen ~ trend + month, data = df_msm_train)
+
+# auto ARIMA model
+model_arima <- 
+  arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(Netgen ~ Month_Year, data = df_msm_train)
+```
+
+```{r}
+# put model results in a table
+models_tbl <-
+  modeltime_table(
+    model_re,
+    model_arima
+  )
+
+calibration_tbl <-
+  models_tbl %>% 
+  modeltime_calibrate(new_data = df_msm_test)
+
+calibration_tbl %>% 
+  modeltime_accuracy() %>%
+  table_modeltime_accuracy(.interactive = FALSE)
+```
+
+
+
+```{r}
+calibration_tbl %>%
+  modeltime_forecast(new_data = df_msm_test, actual_data = df_msm) %>%
+  plot_modeltime_forecast(.legend_show = TRUE, .interactive=FALSE, .conf_interval_show = FALSE)
+```
+
+***
+### Number of Plants by region and by year
+```{r}
+df_pv %>% 
+  group_by(Region, lubridate::year(Month_Year)) %>% 
+  summarise(plant_num = as.integer(n()/12))
+```
+
+***
+### Average Netgen group by region and Month_Year
+```{r}
+df_model <-  df_pv %>% 
+  group_by(Region, Month_Year) %>% 
+  summarise(avg_netgen = mean(Netgen))
+
+df_model
+```
+
+```{r}
+df_c <- df_model[df_model$Region == 'C',]
+df_e <- df_model[df_model$Region == 'E',]
+df_n <- df_model[df_model$Region == 'N',]
+df_s <- df_model[df_model$Region == 'S',]
+df_w <- df_model[df_model$Region == 'W',]
+
+
+df_c %>%
+  plot_time_series(Month_Year, avg_netgen, .smooth=FALSE)
+
+df_e %>%
+  plot_time_series(Month_Year, avg_netgen, .smooth=FALSE)
+
+df_n %>%
+  plot_time_series(Month_Year, avg_netgen, .smooth=FALSE)
+
+df_s %>%
+  plot_time_series(Month_Year, avg_netgen, .smooth=FALSE)
+
+df_w %>%
+  plot_time_series(Month_Year, avg_netgen, .smooth=FALSE)
+```
+
+***
+### Build a forecast model for a new plant in region N
+```{r}
+# Chose plant 'McCormick & Co. Inc. at Belcamp' (this plant was built in 2011 which is the earilest plant in northern region so it has more data to train the model) as the base to make prediction of the new plant , since plants in northern region are all small-sclae plants and their Netgen per month is around 100 to 300.
+
+```
+
+```{r}
+df_mci <- df_pv[df_pv$Plant_Name == "McCormick & Co. Inc. at Belcamp",]
+df_mci <- df_mci %>% 
+  arrange(Month_Year)
+
+# add trend and month column (for regression)
+df_mci <- df_mci %>% 
+  mutate(trend = row_number()) %>% 
+  mutate(month = as.factor(lubridate::month(Month_Year)))
+```
+
+```{r}
+# plot Netgen over time
+df_mci %>%
+  plot_time_series(Month_Year, Netgen, .smooth=FALSE)
+```
+
+```{r}
+# STL decomposition plot
+df_mci %>%
+  plot_stl_diagnostics(
+          Month_Year, Netgen,
+          # Set features to return, desired frequency and trend
+          .feature_set = c("observed", "season", "trend", "remainder"), 
+          .interactive = FALSE)
+```
+
+```{r}
+# split into train and test set.
+df_mci_train <- df_mci %>%
+  filter(Month_Year<"2019-01-01")
+
+df_mci_test <- df_mci %>%
+  filter(Month_Year>="2019-01-01")
+```
+
+
+
+```{r}
+# regression model
+mci_re <-
+  linear_reg() %>%
+  set_engine("lm") %>%
+  fit(Netgen ~ trend + month, data = df_mci_train)
+
+# auto ARIMA model
+mci_arima <- 
+  arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(Netgen ~ Month_Year, data = df_mci_train)
+```
+
+```{r}
+# put model results in a table
+models_tbl <-
+  modeltime_table(
+    mci_re,
+    mci_arima
+  )
+
+calibration_tbl <-
+  models_tbl %>% 
+  modeltime_calibrate(new_data = df_mci_test)
+
+calibration_tbl %>% 
+  modeltime_accuracy() %>%
+  table_modeltime_accuracy(.interactive = FALSE)
+```
+
+
+
+```{r}
+# Create ten year forward for predictions
+ten_year <- tibble(Month_Year = seq(as.Date("2020-01-01"), as.Date("2031-12-01"), by="months"), 
+                   trend = seq.int(109,252))
+
+ten_year <- ten_year %>% 
+  mutate(month = as.factor(lubridate::month(Month_Year)))
+
+ten_year
+```
+
+```{r}
+
+mci_arima <- 
+  arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(Netgen ~ Month_Year, data = df_mci)
+
+
+# choose ARIMUA model
+fit_table <- modeltime_table(mci_arima)
+
+mci_arima
+
+```
+
+```{r}
+
+
+# Make a forecast (predictions)
+result_arima <- 
+  fit_table %>% 
+  modeltime_forecast(new_data = ten_year, actual_data = df_mci)
+
+result_arima
+```
+
+```{r}
+# Visualize the results
+result_arima %>%
+  plot_modeltime_forecast(
+      .legend_show = FALSE)
+```
+
+
+```{r}
+netgen_prediction <- result_arima %>% 
+    filter(.index >= '2021-01-01') %>% 
+    select(.index, .value)
+
+colnames(netgen_prediction) <- c("Date", "Netgen")
+
+netgen_prediction
+```
+
+***
+### make prediction on Mmbtu
+
+```{r}
+mci_arima_mmbtu <- 
+  arima_reg() %>% 
+  set_engine("auto_arima") %>% 
+  fit(Mmbtu ~ Month_Year, data = df_mci)
+
+
+mci_arima_mmbtu
+
+# choose regression model
+fit_table <- modeltime_table(mci_arima_mmbtu)
+
+```
+
+```{r}
+
+
+# Make a forecast (predictions)
+result_arima_mmbtu <- 
+  fit_table %>% 
+  modeltime_forecast(new_data = ten_year, actual_data = df_mci)
+
+result_arima_mmbtu
+```
+
+```{r}
+
+# Visualize the results
+result_arima_mmbtu %>%
+  plot_modeltime_forecast(
+      .legend_show = FALSE)
+
+```
+
+
+
+```{r}
+prediction <- netgen_prediction %>% 
+  mutate(Mmbtu = result_re_mmbtu %>% 
+    filter(.index >= '2021-01-01') %>% 
+    select(.value) %>% 
+    pluck(1))
+
+prediction
+```
+
+```{r}
+write_csv(prediction, "prediction_linear.csv")
+```
+
+

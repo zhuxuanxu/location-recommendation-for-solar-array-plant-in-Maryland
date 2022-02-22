@@ -1,0 +1,59 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library("tidyverse")
+```
+
+```{r}
+
+df <- read_csv('md_pv1.csv')
+
+names(df)<-str_replace_all(names(df), c(" " = "_", "\n" = "_"))
+
+df <-
+  df %>%
+  select(-(10:45),(10:45))
+
+```
+
+```{r}
+
+df_long <- 
+  df %>% 
+  gather(Month, Elec_MMBtu, Elec_MMBtu_January: Elec_MMBtu_December) %>% 
+  mutate(Month = sapply(strsplit(Month, "_"), tail, 1)) %>% 
+  select(1:13, Month, Elec_MMBtu) %>% 
+  bind_cols(gather(df, Month, Tot_MMBtu, Tot_MMBtu_January:Tot_MMBtu_December) %>% select(Tot_MMBtu), 
+            gather(df, Month, Netgen, Netgen_January: Netgen_December) %>% select(Netgen))
+  
+df_long
+
+```
+
+```{r}
+
+df_long <- 
+  df_long %>% 
+  na_if(".") %>% 
+  na_if('-')
+
+```
+
+```{r}
+
+df_long <- 
+  df_long %>% 
+  mutate(YM = paste(df_long$YEAR, df_long$Month), YM = tsibble::yearmonth(YM), YM = as.Date(YM))
+
+df_long
+
+```
+
+```{r}
+
+skimr::skim(df_long)
+
+```
